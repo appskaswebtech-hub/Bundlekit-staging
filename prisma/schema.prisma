@@ -1,0 +1,188 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:dev.sqlite"
+}
+
+// ─────────────────────────────────────────
+// SESSION
+// ─────────────────────────────────────────
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+// ─────────────────────────────────────────
+// BUNDLE
+// ─────────────────────────────────────────
+model Bundle {
+  id                    String              @id @default(uuid())
+  shop                  String
+
+  name                  String
+  title                 String
+  bundleType            String              @default("QUANTITY_BREAKS")
+  prioritySequence      Int                 @default(100)
+  status                String              @default("ACTIVE")
+  showWidget            Boolean             @default(true)
+
+  applyOnSubscriptions  Boolean             @default(false)
+  integrateKasSubscrb   Boolean             @default(false)
+  integrateKasSubscrbLabel   String         @default("Subscribe & Save")
+  numberOfRenewals      String              @default("Unlimited")
+
+  productSelectionType  String              @default("ALL_PRODUCTS")
+  selectedProductIds    String?
+
+  shortcode             String?
+
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  quantityBreaks        QuantityBreak[]
+  discountCombination   DiscountCombination?
+  widgetSettings        WidgetSettings?
+
+  @@index([shop])
+  @@index([shop, status])
+  @@index([shop, bundleType])
+  @@index([shop, createdAt])
+}
+
+// ─────────────────────────────────────────
+// QUANTITY BREAK
+// ─────────────────────────────────────────
+model QuantityBreak {
+  id                    String      @id @default(uuid())
+  shop                  String
+  bundleId              String
+  bundle                Bundle      @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+
+  type                  String      @default("FIXED_QUANTITY")
+  quantity              Int
+  maxQuantity           Int?
+
+  discountType          String      @default("PERCENTAGE")
+  discountValue         Float
+
+  savingsText           String      @default("Save {{discount_value}}{{discount_unit}}")
+  description           String
+
+  freeShipping          Boolean     @default(false)
+
+  sortOrder             Int         @default(0)
+
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  @@index([shop])
+  @@index([shop, bundleId])
+  @@index([bundleId, sortOrder])
+}
+
+// ─────────────────────────────────────────
+// DISCOUNT COMBINATION
+// ─────────────────────────────────────────
+model DiscountCombination {
+  id                    String      @id @default(uuid())
+  shop                  String
+  bundleId              String      @unique
+  bundle                Bundle      @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+
+  productDiscounts      Boolean     @default(true)
+  orderDiscounts        Boolean     @default(true)
+  shippingDiscounts     Boolean     @default(true)
+
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  @@index([shop])
+  @@index([shop, bundleId])
+}
+
+// ─────────────────────────────────────────
+// WIDGET SETTINGS
+// ─────────────────────────────────────────
+model WidgetSettings {
+  id                    String      @id @default(uuid())
+  shop                  String
+  bundleId              String      @unique
+  bundle                Bundle      @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+
+  colors                String      @default("{\"primary\":\"#5C6AC4\",\"secondary\":\"#47C1BF\",\"accent\":\"#00848E\"}")
+
+  enableVariantPicker   Boolean     @default(false)
+
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  @@index([shop])
+  @@index([shop, bundleId])
+}
+
+model Shop {
+  id         String        @id @default(cuid())
+  shopDomain String        @unique
+  planName   String        @default("free")
+  createdAt  DateTime      @default(now())
+  settings   ShopSetting[] // ✅ ? hatao — array banao (one-to-many)
+}
+
+model ShopSetting {
+  id               String   @id @default(cuid())
+  shopId           String
+  widgetType       String   @default("volume")
+
+  shop             Shop     @relation(fields: [shopId], references: [id])
+
+  // Colors
+  primary_color            String @default("#1a1a2e")
+  selected_bg             String @default("#f0f4ff")
+  badge_bg                String @default("#1a1a2e")
+  badge_text              String @default("#ffffff")
+  text_color              String @default("#333333")
+  border_color            String @default("#e0e0e0")
+  original_price_color    String @default("#999999")
+
+  // Spacing
+  margin_top              Int @default(16)
+  margin_bottom           Int @default(16)
+
+  brandingRemoved  Boolean  @default(false)
+
+  @@unique([shopId, widgetType])
+}
+
+model ShopPlan {
+  id                   Int       @id @default(autoincrement())
+  shop                 String    @unique        // one plan record per shop
+  plan                 String    @default("free") // "free" | "pro" | "advanced"
+  subscriptionId       String?                  // Shopify AppSubscription GID
+  status               String    @default("active") // "active" | "cancelled" | "expired"
+  trialEndsAt          DateTime?                // when trial expires
+  billingStartedAt     DateTime?                // when paid billing began
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([shop])
+}

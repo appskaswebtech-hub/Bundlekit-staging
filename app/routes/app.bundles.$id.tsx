@@ -1,0 +1,929 @@
+/**
+ * PHASE 3 UPDATE: app/routes/app.bundles.$id.tsx
+ *
+ * Add this import at the top of your existing file:
+ */
+// import { syncBundleConfigToDiscount } from "../utils/syncDiscount.server";
+
+/**
+ * Then update the ACTION function.
+ * Replace your existing action with this one.
+ * The only changes are:
+ *   1. We get `admin` from authenticate.admin()
+ *   2. We call syncBundleConfigToDiscount() after save and delete
+ */
+
+import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
+import { useLoaderData, useNavigate, useSubmit, useNavigation, useActionData } from "@remix-run/react";
+import { useState, useCallback, useEffect } from "react";
+import {
+  Page,
+  Layout,
+  Text,
+  Card,
+  BlockStack,
+  Box,
+  InlineStack,
+  Badge,
+  Divider,
+  Banner,
+  Button,
+  TextField,
+  Select,
+  Checkbox,
+  RadioButton,
+  InlineGrid,
+  Link
+} from "@shopify/polaris";
+import { DeleteIcon, PlusIcon } from "@shopify/polaris-icons";
+import { authenticate } from "../shopify.server";
+import db from "../db.server";
+import { checkAppAccess } from "../utils/checkAccess.server";
+import { WidgetPreview } from "../components/WidgetPreview";
+import { syncBundleConfigToDiscount, deleteShopifyDiscount } from "../utils/syncDiscount.server";
+
+
+
+
+// ---------------------
+
+import { useAppBridge } from "@shopify/app-bridge-react";
+// ---------------------
+
+// ----------------------
+export const loader = async ({ params, request }: LoaderFunctionArgs) => {
+  const { session, admin, billing } = await authenticate.admin(request);
+  const shop = session.shop;
+
+  // Get current plan for feature gating
+  const { activePlan } = await checkAppAccess(admin, billing);
+
+  const bundle = await db.bundle.findFirst({
+    where: { id: params.id, shop },
+    include: {
+      quantityBreaks: { orderBy: { sortOrder: "asc" } },
+      discountCombination: true,
+      widgetSettings: true,
+    },
+  });
+
+  if (!bundle) throw new Response("Bundle not found", { status: 404 });
+
+  // ── Agar specific products hain toh Shopify se fetch karo ──
+  let selectedProductsData: any[] = [];
+
+  if (
+    bundle.productSelectionType === "SPECIFIC_PRODUCTS" &&
+    bundle.selectedProductIds
+  ) {
+    const ids = JSON.parse(bundle.selectedProductIds);
+
+    if (ids.length > 0) {
+      // GID format mein convert karo
+      const gids = ids.map((id: string) => `gid://shopify/Product/${id}`);
+
+      // Shopify GraphQL se product data fetch karo
+      const response = await admin.graphql(`
+        query getProducts($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on Product {
+              id
+              title
+              featuredImage {
+                url
+              }
+            }
+          }
+        }
+      `, {
+        variables: { ids: gids },
+      });
+
+      const responseJson = await response.json();
+      const nodes = responseJson.data?.nodes || [];
+
+      // Clean format mein convert karo
+      selectedProductsData = nodes
+        .filter(Boolean)
+        .map((p: any) => ({
+          id: p.id.split("/").pop(), // numeric ID
+          title: p.title,
+          image: p.featuredImage?.url || null,
+        }));
+    }
+  }
+
+  return json({ bundle, shop, selectedProductsData, activePlan });
+};
+// ----------------------
+
+// ──────────────────────────────────────────────
+// ACTION — NOW SYNCS TO SHOPIFY FUNCTION
+// ──────────────────────────────────────────────
+export const action = async ({ params, request }: ActionFunctionArgs) => {
+  const { session, admin } = await authenticate.admin(request);
+  const shop = session.shop;
+  const formData = await request.formData();
+  const intent = formData.get("intent") as string;
+
+  // DELETE BUNDLE
+  if (intent === "delete") {
+    await db.bundle.delete({ where: { id: params.id } });
+
+    // Check how many active bundles remain for this shop
+    const remainingCount = await db.bundle.count({
+      where: { shop, status: "ACTIVE" },
+    });
+
+    try {
+      if (remainingCount === 0) {
+        // No bundles left — remove the Shopify discount entirely
+        await deleteShopifyDiscount(admin, shop);
+      } else {
+        // Other bundles still exist — update the discount metafield
+        await syncBundleConfigToDiscount(admin, shop);
+      }
+    } catch (err) {
+      console.error("[Bundler] Post-delete sync failed:", err);
+    }
+
+    return redirect("/app/bundles");
+  }
+
+  // SAVE BUNDLE
+  if (intent === "save") {
+  try {
+    const data = JSON.parse(formData.get("data") as string);
+    // Update bundle
+    await db.bundle.update({
+      where: { id: params.id },
+      data: {
+        name: data.name,
+        title: data.title,
+        status: data.status,
+        showWidget: data.showWidget,
+        prioritySequence: parseInt(data.prioritySequence) || 100,
+        productSelectionType: data.productSelectionType,
+        selectedProductIds: data.selectedProductIds || null,
+        applyOnSubscriptions: data.applyOnSubscriptions,
+        integrateKasSubscrb: data.integrateKasSubscrb,
+        integrateKasSubscrbLabel: data.integrateKasSubscrbLabel,
+        numberOfRenewals: data.numberOfRenewals,
+      },
+    });
+
+    // Replace quantity breaks
+    await db.quantityBreak.deleteMany({ where: { bundleId: params.id } });
+    if (data.quantityBreaks?.length) {
+      await db.quantityBreak.createMany({
+        data: data.quantityBreaks.map((qb: any, idx: number) => ({
+          shop,
+          bundleId: params.id!,
+          type: qb.type,
+          quantity: parseInt(qb.quantity),
+          maxQuantity: qb.maxQuantity ? parseInt(qb.maxQuantity) : null,
+          discountType: qb.discountType,
+          discountValue: parseFloat(qb.discountValue) || 0,
+          savingsText: qb.savingsText || "",
+          description: qb.description || "",
+          freeShipping: qb.freeShipping || false,
+          sortOrder: idx,
+        })),
+      });
+    }
+
+    // Upsert discount combination
+    await db.discountCombination.upsert({
+      where: { bundleId: params.id! },
+      create: {
+        shop,
+        bundleId: params.id!,
+        productDiscounts: data.discountCombination?.productDiscounts ?? true,
+        orderDiscounts: data.discountCombination?.orderDiscounts ?? true,
+        shippingDiscounts: data.discountCombination?.shippingDiscounts ?? true,
+      },
+      update: {
+        productDiscounts: data.discountCombination?.productDiscounts ?? true,
+        orderDiscounts: data.discountCombination?.orderDiscounts ?? true,
+        shippingDiscounts: data.discountCombination?.shippingDiscounts ?? true,
+      },
+    });
+
+    // Sync config to discount function after save
+    try {
+      await syncBundleConfigToDiscount(admin, shop);
+    } catch (err) {
+      console.error("[Bundler] Sync failed (function may not be deployed yet):", err);
+    }
+
+    return json({ success: true });
+  } catch (err) {
+    console.error("[BundleEdit] Save failed:", err);
+    return json({ success: false, error: "Failed to save bundle. Please try again." }, { status: 500 });
+  }
+  }
+
+  // ADD QUANTITY BREAK
+  if (intent === "addBreak") {
+    const count = await db.quantityBreak.count({ where: { bundleId: params.id } });
+    await db.quantityBreak.create({
+      data: {
+        shop,
+        bundleId: params.id!,
+        type: "FIXED_QUANTITY",
+        quantity: count + 1,
+        discountType: "PERCENTAGE",
+        discountValue: (count + 1) * 5,
+        savingsText: "Save {{discount_value}}{{discount_unit}}",
+        description: "Buy {{quantity}} and get a discount!",
+        sortOrder: count,
+      },
+    });
+    return json({ success: true });
+  }
+
+  // REMOVE QUANTITY BREAK
+  if (intent === "removeBreak") {
+    const breakId = formData.get("breakId") as string;
+    await db.quantityBreak.delete({ where: { id: breakId } });
+    return json({ success: true });
+  }
+
+  return json({ error: "Unknown intent" }, { status: 400 });
+};
+
+
+
+// ──────────────────────────────────────────────
+// DEFAULT QUANTITY BREAK
+// ──────────────────────────────────────────────
+const defaultBreak = () => ({
+  id: crypto.randomUUID(),
+  type: "FIXED_QUANTITY",
+  quantity: 1,
+  maxQuantity: null as number | null,
+  discountType: "PERCENTAGE",
+  discountValue: 0,
+  savingsText: "Save {{discount_value}}{{discount_unit}}",
+  description: "Buy {{quantity}} and get a discount!",
+  freeShipping: false,
+});
+
+// ──────────────────────────────────────────────
+// COMPONENT (unchanged from Phase 1)
+// ──────────────────────────────────────────────
+export default function BundleEdit() {
+  const { bundle, selectedProductsData, activePlan } = useLoaderData<typeof loader>();
+  const isAdvanced = activePlan === "advanced";
+  const actionData = useActionData<{ success?: boolean; error?: string }>();
+  const navigate = useNavigate();
+  const submit = useSubmit();
+  const navigation = useNavigation();
+  const isSaving = navigation.state === "submitting";
+
+const shopify = useAppBridge();
+
+useEffect(() => {
+  if (!actionData) return;
+  if (actionData.success) {
+    shopify.toast.show("Bundle saved successfully!", { duration: 3000 });
+  } else if (actionData.error) {
+    shopify.toast.show(actionData.error, { isError: true, duration: 4000 });
+  }
+}, [actionData]);
+
+const [pickerOpen, setPickerOpen] = useState(false);
+// Sirf IDs store karta hai (DB ke liye)
+const [selectedProductIds, setSelectedProductIds] = useState<string[]>(
+  bundle.selectedProductIds ? JSON.parse(bundle.selectedProductIds) : []
+);
+
+// Full product objects store karta hai (UI display ke liye)
+const [selectedProducts, setSelectedProducts] = useState<any[]>(
+  selectedProductsData  // ← Shopify API se aaya hua data
+);
+
+// ---------------------------
+const openProductPicker = async () => {
+  try {
+    const selected = await shopify.resourcePicker({
+      type: "product",
+      multiple: true,
+      // ✅ Pehle se selected products picker mein checked dikhenge
+      selectionIds: selectedProductIds.map((id: string) => ({ 
+        id: `gid://shopify/Product/${id}` // GID format mein bhejo
+      })),
+    });
+
+    if (selected && selected.length > 0) {
+      // Numeric IDs save karo DB ke liye
+      const ids = selected.map((p: any) => p.id.split("/").pop());
+      setSelectedProductIds(ids);
+
+      // Full product objects save karo UI ke liye
+      const products = selected.map((p: any) => ({
+        id: p.id.split("/").pop(),
+        title: p.title,
+        image: p.images?.[0]?.originalSrc || null,
+      }));
+      setSelectedProducts(products);
+    }
+  } catch (err) {
+    console.error("Picker error:", err);
+  }
+};
+
+const removeProduct = (id: string) => {
+  setSelectedProductIds((prev) => prev.filter((pid) => pid !== id));
+  setSelectedProducts((prev) => prev.filter((p) => p.id !== id));
+};
+// ---------------------------
+// ------------------------------------
+  // ─── Form State ───
+  const [name, setName] = useState(bundle.name);
+  const [title, setTitle] = useState(bundle.title);
+  const [status, setStatus] = useState(bundle.status);
+  const [showWidget, setShowWidget] = useState(bundle.showWidget);
+  const [prioritySequence, setPrioritySequence] = useState(String(bundle.prioritySequence));
+  const [productSelectionType, setProductSelectionType] = useState(bundle.productSelectionType);
+  const [applyOnSubscriptions, setApplyOnSubscriptions] = useState(bundle.applyOnSubscriptions);
+  const [numberOfRenewals, setNumberOfRenewals] = useState(bundle.numberOfRenewals);
+  const [integrateKasSubscrb, setIntegrateKasSubscrb] = useState(false);
+  const [integrateKasSubscrbLabel, setIntegrateKasSubscrbLabel] = useState("Subscribe & Save");
+          
+  const [quantityBreaks, setQuantityBreaks] = useState(
+    bundle.quantityBreaks.map((qb: any) => ({
+      id: qb.id,
+      type: qb.type,
+      quantity: qb.quantity,
+      maxQuantity: qb.maxQuantity,
+      discountType: qb.discountType,
+      discountValue: qb.discountValue,
+      savingsText: qb.savingsText,
+      description: qb.description,
+      freeShipping: qb.freeShipping,
+    }))
+  );
+
+  const [productDiscounts, setProductDiscounts] = useState(
+    bundle.discountCombination?.productDiscounts ?? true
+  );
+  const [orderDiscounts, setOrderDiscounts] = useState(
+    bundle.discountCombination?.orderDiscounts ?? true
+  );
+  const [shippingDiscounts, setShippingDiscounts] = useState(
+    bundle.discountCombination?.shippingDiscounts ?? true
+  );
+
+  const updateBreak = useCallback(
+    (index: number, field: string, value: any) => {
+      setQuantityBreaks((prev: any[]) =>
+        prev.map((qb: any, i: number) => (i === index ? { ...qb, [field]: value } : qb))
+      );
+    },
+    []
+  );
+
+  const addBreak = useCallback(() => {
+    setQuantityBreaks((prev: any[]) => {
+      const nextQty = prev.length > 0 ? Math.max(...prev.map((b: any) => b.quantity)) + 1 : 1;
+      const lastDiscount = prev.length > 0 ? (prev[prev.length - 1].discountValue || 0) : 0;
+      const nextDiscount = Math.min(lastDiscount + 10, 90);
+      return [
+        ...prev,
+        { ...defaultBreak(), quantity: nextQty, discountValue: nextDiscount },
+      ];
+    });
+  }, []);
+
+  const removeBreak = useCallback((index: number) => {
+    setQuantityBreaks((prev: any[]) => prev.filter((_: any, i: number) => i !== index));
+  }, []);
+
+  const handleSave = () => {
+    
+    const formData = new FormData();
+    formData.set("intent", "save");
+    formData.set(
+      "data",
+      JSON.stringify({
+        name,
+        title,
+        status,
+        showWidget,
+        prioritySequence,
+        productSelectionType,
+        selectedProductIds: JSON.stringify(selectedProductIds),
+        applyOnSubscriptions,
+        numberOfRenewals,
+        quantityBreaks,
+        discountCombination: { productDiscounts, orderDiscounts, shippingDiscounts },
+      })
+    );
+    submit(formData, { method: "post" });
+  };
+
+  const handleDelete = () => {
+    if (!confirm("Are you sure you want to delete this bundle?")) return;
+    const formData = new FormData();
+    formData.set("intent", "delete");
+    submit(formData, { method: "post" });
+  };
+
+  const discountTypeOptions = [
+    { label: "Percentage discount (%)", value: "PERCENTAGE" },
+    { label: "Fixed amount ($)", value: "FIXED_AMOUNT" },
+    { label: "Fixed price per item ($)", value: "FIXED_PRICE" },
+  ];
+
+  const breakTypeOptions = [
+    { label: "Fixed quantity", value: "FIXED_QUANTITY" },
+    { label: "Quantity range", value: "QUANTITY_RANGE" },
+  ];
+
+  const statusOptions = [
+    { label: "Active", value: "ACTIVE" },
+    { label: "Paused", value: "PAUSED" },
+    { label: "Draft", value: "DRAFT" },
+  ];
+
+  const showWidgetOptions = [
+    { label: "Show", value: "true" },
+    { label: "Hide", value: "false" },
+  ];
+
+  const renewalOptions = [
+    { label: "Unlimited", value: "Unlimited" },
+    { label: "1", value: "1" },
+    { label: "2", value: "2" },
+    { label: "3", value: "3" },
+    { label: "5", value: "5" },
+    { label: "10", value: "10" },
+  ];
+
+  return (
+    <Page
+      title="Bundle"
+      backAction={{ content: "Bundles", onAction: () => navigate("/app/bundles") }}
+      primaryAction={{
+        content: "Save bundle",
+        loading: isSaving,
+        onAction: handleSave,
+      }}
+      secondaryActions={[
+        {
+          content: "Delete",
+          destructive: true,
+          onAction: handleDelete,
+        },
+      ]}
+    >
+     
+      <Layout>
+        <Layout.Section>
+          <BlockStack gap="400">
+            <Banner tone="info" onDismiss={() => {}}>
+              <p>
+                Quantity break widget will be displayed above add to cart buttons on product pages.
+                Discounts are automatically applied at checkout.
+              </p>
+            </Banner>
+
+            {/* General Information */}
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">
+                  General information
+                </Text>
+                <TextField
+                  label="Bundle name"
+                  value={name}
+                  onChange={setName}
+                  helpText="Bundle name will be displayed in checkout."
+                  autoComplete="off"
+                  readOnly
+                />
+                <TextField
+                  label="Title"
+                  value={title}
+                  onChange={setTitle}
+                  helpText="Title will be displayed in bundle widgets."
+                  autoComplete="off"
+                />
+              </BlockStack>
+            </Card>
+
+            {/* Bundle Settings */}
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">
+                  Bundle settings
+                </Text>
+                <TextField
+                  label="Priority sequence"
+                  type="number"
+                  value={prioritySequence}
+                  onChange={setPrioritySequence}
+                  helpText="Bundler applies discount based on priority."
+                  autoComplete="off"
+                />
+                <Divider />
+                <InlineGrid columns={2} gap="400">
+                  <Select
+                    label="Bundle status"
+                    options={statusOptions}
+                    value={status}
+                    onChange={setStatus}
+                    helpText="Set the status to paused if you want to stop applying discounts."
+                  />
+                  <Select
+                    label="Show bundle widget for this bundle"
+                    options={showWidgetOptions}
+                    value={String(showWidget)}
+                    onChange={(val) => setShowWidget(val === "true")}
+                    helpText="Hide bundle widget on product pages."
+                  />
+                </InlineGrid>
+                <Divider />
+                <Checkbox
+                  label="Apply on subscriptions and pre-orders"
+                  checked={applyOnSubscriptions}
+                  onChange={setApplyOnSubscriptions}
+                  helpText="Turn this on if you want this bundle to work with subscriptions and pre-orders."
+                />
+                {applyOnSubscriptions && (
+                  <Select
+                    label="Number of renewals"
+                    options={renewalOptions}
+                    value={numberOfRenewals}
+                    onChange={setNumberOfRenewals}
+                    helpText="Set the number of subscription renewals your bundle discount should apply to."
+                  />
+                )}
+              </BlockStack>
+            </Card>
+
+            {/* Discount Combinations — Advanced plan only */}
+            <Card>
+              <BlockStack gap="400">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h2" variant="headingMd">
+                    Discount combinations
+                  </Text>
+                  {!isAdvanced && (
+                    <Badge tone="warning">Advanced plan</Badge>
+                  )}
+                </InlineStack>
+
+                {isAdvanced ? (
+                  <BlockStack gap="300">
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Control whether this bundle discount can stack with other active discounts at checkout.
+                    </Text>
+                    <Checkbox
+                      label="Product Discounts"
+                      helpText="Stack with product discount codes"
+                      checked={productDiscounts}
+                      onChange={setProductDiscounts}
+                    />
+                    <Checkbox
+                      label="Order Discounts"
+                      helpText="Stack with order-level discount codes"
+                      checked={orderDiscounts}
+                      onChange={setOrderDiscounts}
+                    />
+                    <Checkbox
+                      label="Shipping Discounts"
+                      helpText="Stack with free shipping discount codes"
+                      checked={shippingDiscounts}
+                      onChange={setShippingDiscounts}
+                    />
+                  </BlockStack>
+                ) : (
+                  <BlockStack gap="300">
+                    <Banner tone="warning">
+                      <Text as="p" variant="bodySm">
+                        Discount combination controls are available on the <strong>Advanced plan</strong>.
+                        Upgrade to choose whether your bundle discount stacks with product, order, or shipping discounts.
+                      </Text>
+                    </Banner>
+                    <div style={{ opacity: 0.4, pointerEvents: "none" }}>
+                      <BlockStack gap="300">
+                        <Checkbox label="Product Discounts" checked disabled onChange={() => {}} />
+                        <Checkbox label="Order Discounts" checked disabled onChange={() => {}} />
+                        <Checkbox label="Shipping Discounts" checked disabled onChange={() => {}} />
+                      </BlockStack>
+                    </div>
+                    <Button
+                      variant="primary"
+                      onClick={() => navigate("/app/billing")}
+                    >
+                      Upgrade to Advanced
+                    </Button>
+                  </BlockStack>
+                )}
+              </BlockStack>
+            </Card>
+
+            {/* Quantity Breaks */}
+            <Card>
+              <BlockStack gap="400">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h2" variant="headingMd">
+                    Quantity breaks
+                  </Text>
+                  <Button icon={PlusIcon} onClick={addBreak}>
+                    Add quantity break
+                  </Button>
+                </InlineStack>
+
+                {quantityBreaks.map((qb: any, idx: number) => (
+                  <Box key={qb.id || idx}>
+                    <BlockStack gap="300">
+                      <InlineStack align="space-between" blockAlign="center">
+                        <Text as="h3" variant="headingSm">
+                          QUANTITY BREAK #{idx + 1}
+                        </Text>
+                        {idx > 0 && (
+                          <Button
+                            variant="plain"
+                            tone="critical"
+                            icon={DeleteIcon}
+                            onClick={() => removeBreak(idx)}
+                          >
+                            Remove
+                          </Button>
+                        )}
+                      </InlineStack>
+
+                      <InlineGrid columns={2} gap="400">
+                        <Select
+                          label="Type"
+                          options={breakTypeOptions}
+                          value={qb.type}
+                          onChange={(val) => updateBreak(idx, "type", val)}
+                          helpText={
+                            idx === 0
+                              ? "The first option needs to always be fixed quantity for one item."
+                              : "Select the type of volume discount you prefer."
+                          }
+                        />
+                        <TextField
+                          label="Quantity"
+                          type="number"
+                          value={String(qb.quantity)}
+                          onChange={(val) => updateBreak(idx, "quantity", parseInt(val) || 0)}
+                          helpText={
+                            idx === 0
+                              ? "The first option needs to always be for only one item."
+                              : undefined
+                          }
+                          autoComplete="off"
+                          disabled={idx === 0}
+                        />
+                      </InlineGrid>
+
+                      {qb.type === "QUANTITY_RANGE" && (
+                        <TextField
+                          label="Max quantity"
+                          type="number"
+                          value={String(qb.maxQuantity || "")}
+                          onChange={(val) =>
+                            updateBreak(idx, "maxQuantity", val ? parseInt(val) : null)
+                          }
+                          autoComplete="off"
+                        />
+                      )}
+
+                      <InlineGrid columns={2} gap="400">
+                        <Select
+                          label="Discount"
+                          options={discountTypeOptions}
+                          value={qb.discountType}
+                          onChange={(val) => updateBreak(idx, "discountType", val)}
+                        />
+                        <TextField
+                          label="Adjustment value"
+                          type="number"
+                          value={String(qb.discountValue)}
+                          onChange={(val) => {
+                            const parsed = val === "" ? 0 : parseFloat(val);
+                            const newVal = isNaN(parsed) ? 0 : parsed;
+                            updateBreak(idx, "discountValue", newVal);
+                            // If savingsText has no template placeholder, reset it so {{discount_value}} stays in sync
+                            if (!qb.savingsText.includes("{{discount_value}}")) {
+                              updateBreak(idx, "savingsText", "Save {{discount_value}}{{discount_unit}}");
+                            }
+                          }}
+                          suffix={qb.discountType === "PERCENTAGE" ? "%" : "$"}
+                          autoComplete="off"
+                          disabled={idx === 0}
+                        />
+                      </InlineGrid>
+
+                      <InlineGrid columns={2} gap="400">
+                        <TextField
+                          label="Savings text"
+                          value={qb.savingsText}
+                          onChange={(val) => updateBreak(idx, "savingsText", val)}
+                          helpText="{{discount_value}} and {{discount_unit}} placeholders will be replaced."
+                          autoComplete="off"
+                        />
+                        <TextField
+                          label="Description"
+                          value={qb.description}
+                          onChange={(val) => updateBreak(idx, "description", val)}
+                          helpText="{{quantity}}, {{max_quantity}} and {{min_value}} placeholders will be replaced."
+                          autoComplete="off"
+                        />
+                      </InlineGrid>
+
+                      {idx < quantityBreaks.length - 1 && <Divider />}
+                    </BlockStack>
+                  </Box>
+                ))}
+              </BlockStack>
+            </Card>
+
+            {/* Product Selection */}
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">
+                  Product selection type
+                </Text>
+                <RadioButton
+                  label="Apply only to specific products (select them below)"
+                  id="specific"
+                  checked={productSelectionType === "SPECIFIC_PRODUCTS"}
+                  onChange={() => setProductSelectionType("SPECIFIC_PRODUCTS")}
+                />
+                <RadioButton
+                  label="Apply this discount to all products in the shop"
+                  id="all"
+                  checked={productSelectionType === "ALL_PRODUCTS"}
+                  onChange={() => setProductSelectionType("ALL_PRODUCTS")}
+                />
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Select if you want to apply to all products or only specific products in your shop.
+                </Text>
+                {/* ------------------------ */}
+           {productSelectionType === "SPECIFIC_PRODUCTS" && (
+  <BlockStack gap="300">
+    <Button onClick={openProductPicker}>
+      Select products
+    </Button>
+
+    {/* Selected products list */}
+    {selectedProductIds.length > 0 && (
+      <BlockStack gap="200">
+        <Text as="p" variant="bodyMd" fontWeight="semibold">
+          {selectedProductIds.length} product(s) selected:
+        </Text>
+        {selectedProducts.map((product: any) => (
+          <InlineStack key={product.id} align="space-between" blockAlign="center">
+            <InlineStack gap="300" blockAlign="center">
+              {/* Product image */}
+              {product.image && (
+                <img
+                  src={product.image}
+                  alt={product.title}
+                  style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4 }}
+                />
+              )}
+              <Text as="p" variant="bodySm">{product.title}</Text>
+            </InlineStack>
+            {/* Remove button */}
+            <Button
+              variant="plain"
+              tone="critical"
+              icon={DeleteIcon}
+              onClick={() => removeProduct(product.id)}
+            />
+          </InlineStack>
+        ))}
+      </BlockStack>
+    )}
+  </BlockStack>
+)}
+                {/* ------------------------ */}
+              </BlockStack>
+            </Card>
+
+            {/* =============== */}
+            <Card padding="0">
+  <div
+    style={{
+      border: "1px solid #dfe3e8",
+      borderRadius: "12px",
+      overflow: "hidden",
+      background: "#fff",
+    }}
+  >
+    {/* Top Content */}
+    <div
+      style={{
+        padding: "24px",
+        borderBottom: "1px solid #e1e3e5",
+      }}
+    >
+      <BlockStack gap="300">
+        
+        {/* Heading */}
+        <Text as="h2" variant="headingMd">
+          KAS SUBSCRIPTION integration
+        </Text>
+
+        {/* Description */}
+        <Text as="p" variant="bodyMd">
+          Check the box below to integrate{" "}
+          <Link
+         url="https://apps.shopify.com/kas-subscription"
+         target="_blank"
+          removeUnderline
+           
+          >
+         KAS SUBSCRIPTION
+          </Link> {""}
+          widget into the quantity break. To show the widget, you must
+          also have auto-charging subscription rules configured for
+          the same products that this quantity break is applied to.
+        </Text>
+      </BlockStack>
+    </div>
+
+    {/* Bottom Content */}
+    <div
+      style={{
+        padding: "24px",
+      }}
+    >
+      <BlockStack gap="400">
+
+      {/* Checkbox */}
+<Checkbox
+  label="Enable KAS SUBSCRIPTION integration"
+  checked={integrateKasSubscrb}
+  onChange={setIntegrateKasSubscrb}
+/>
+
+{/* Show only when checkbox is checked */}
+{integrateKasSubscrb && (
+  <BlockStack gap="200">
+    <Text as="p" variant="bodyMd">
+      Subscription checkbox label:
+    </Text>
+
+    <input
+      type="text"
+      value={integrateKasSubscrbLabel}
+      onChange={(e) =>
+        setIntegrateKasSubscrbLabel(e.target.value)
+      }
+      placeholder="Subscribe & Save"
+      style={{
+        width: "100%",
+        padding: "10px 12px",
+        border: "1px solid #c9cccf",
+        borderRadius: "4px",
+        fontSize: "14px",
+        outline: "none",
+        background: "#fff",
+      }}
+    />
+  </BlockStack>
+)}
+      </BlockStack>
+    </div>
+  </div>
+</Card>
+            {/* =============== */}
+          </BlockStack>
+        </Layout.Section>
+
+        {/* Widget Preview */}
+        <Layout.Section variant="oneThird">
+          <Box position="sticky" insetBlockStart="400">
+            <Card>
+              <BlockStack gap="200">
+                <Text as="h2" variant="headingMd">
+                  Widget preview
+                </Text>
+                <WidgetPreview
+                  title={title}
+                  breaks={quantityBreaks.map((qb: any) => ({
+                    quantity: qb.quantity,
+                    discountType: qb.discountType,
+                    discountValue: qb.discountValue,
+                    description: qb.description,
+                    savingsText: qb.savingsText,
+                  }))}
+                />
+              </BlockStack>
+            </Card>
+          </Box>
+        </Layout.Section>
+      </Layout>
+    </Page>
+  );
+}

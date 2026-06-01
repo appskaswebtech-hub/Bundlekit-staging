@@ -1,0 +1,75 @@
+{% comment %}
+  Bundler ─ Volume discount Widget
+  Merchants add this via: Theme Editor → Product page → Add block → "Volume discount element"
+  Place it above or near the Add-to-Cart button.
+{% endcomment %}
+
+<div
+  id="bdlrkit-bundler-vd-{{ block.id }}"
+  class="bdlrkit-bundler-vd"
+  data-block-id="{{ block.id }}"
+  data-product-id="{{ product.id }}"
+  data-variant-id="{{ product.selected_or_first_available_variant.id }}"
+  data-product-price="{{ product.selected_or_first_available_variant.price | money_without_currency | replace: ',', '' }}"
+  data-product-compare-price="{{ product.selected_or_first_available_variant.compare_at_price | money_without_currency | replace: ',', '' }}"
+  data-currency-symbol="{{ cart.currency.symbol }}"
+  data-widget-type="volume-widget"
+  data-shop="{{ shop.permanent_domain }}"
+  data-proxy-path="/apps/bundler"
+
+ style="
+    margin-top:{{ block.settings.margin_top }}px;
+    margin-bottom:{{ block.settings.margin_bottom }}px;
+    --vd-primary: #1a1a2e;
+    --vd-selected-bg: #f0f4ff;
+    --vd-badge-bg: #1a1a2e;
+    --vd-badge-text: #ffffff;
+    --vd-text: #333333;
+    --vd-border: #e0e0e0;
+    --vd-original: #999999;
+  "
+>
+  {%- comment -%} Loading skeleton shown until JS hydrates {%- endcomment -%}
+  <div class="bdlrkit-bundler-vd__loading">
+    <div class="bdlrkit-bundler-vd__skeleton-title"></div>
+    <div class="bdlrkit-bundler-vd__skeleton-row"></div>
+    <div class="bdlrkit-bundler-vd__skeleton-row"></div>
+  </div>
+</div>
+
+{{ 'volume-widget.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'volume-widget.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "Volume discount element",
+  "target": "section", 
+  "templates": ["product"],
+  "settings": [
+    {
+      "type": "header",
+      "content": "Spacing"
+    },
+    {
+      "type": "range",
+      "id": "margin_top",
+      "label": "Top margin",
+      "min": 0,
+      "max": 60,
+      "step": 4,
+      "default": 16,
+      "unit": "px"
+    },
+    {
+      "type": "range",
+      "id": "margin_bottom",
+      "label": "Bottom margin",
+      "min": 0,
+      "max": 60,
+      "step": 4,
+      "default": 16,
+      "unit": "px"
+    }
+  ]
+}
+{% endschema %}

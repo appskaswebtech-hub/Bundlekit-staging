@@ -1,0 +1,219 @@
+/* ═══════════════════════════════════════════
+   Bundler – Quantity Breaks Widget
+   Matches the Bundler reference UI exactly
+   ═══════════════════════════════════════════ */
+
+/* ── Loading skeleton ── */
+.bdlrkit-bundler-vd__loading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+.bdlrkit-bundler-vd__skeleton-title {
+  height: 14px;
+  width: 60%;
+  margin: 0 auto 4px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #eee 25%, #f5f5f5 50%, #eee 75%);
+  background-size: 200% 100%;
+  animation: bundler-shimmer 1.4s ease infinite;
+}
+.bdlrkit-bundler-vd__skeleton-row {
+  height: 48px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #eee 25%, #f5f5f5 50%, #eee 75%);
+  background-size: 200% 100%;
+  animation: bundler-shimmer 1.4s ease infinite;
+}
+@keyframes bundler-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Hide skeleton once widget loads ── */
+.bdlrkit-bundler-vd--loaded .bdlrkit-bundler-vd__loading {
+  display: none;
+}
+
+/* ── Title row with decorative lines ── */
+.bdlrkit-bundler-vd__title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+  color: var(--vd-text);
+}
+.bdlrkit-bundler-vd__title::before,
+.bdlrkit-bundler-vd__title::after {
+  content: '';
+  flex: 0 0 36px;
+  height: 1px;
+  background: var(--vd-border);
+}
+
+/* ── Option rows ── */
+.bdlrkit-bundler-vd__options {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.bdlrkit-bundler-vd__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1.5px solid var(--vd-border);
+  border-radius: 10px;
+  margin-bottom: 6px;
+  /* cursor: pointer; */
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  background: #fff;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.bdlrkit-bundler-vd__option:last-child {
+  margin-bottom: 0;
+}
+.bdlrkit-bundler-vd__option:hover {
+  border-color: var(--vd-primary);
+}
+
+/* Selected state */
+.bdlrkit-bundler-vd__option--selected {
+  border-color: var(--vd-primary);
+  background: var(--vd-selected-bg);
+  box-shadow: 0 0 0 1px var(--vd-primary);
+}
+
+/* ── Radio circle ── */
+.bdlrkit-bundler-vd__radio {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--vd-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s ease;
+}
+.bdlrkit-bundler-vd__option--selected .bdlrkit-bundler-vd__radio {
+  border-color: var(--vd-primary);
+}
+.bdlrkit-bundler-vd__radio-inner {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--vd-primary);
+  transform: scale(0);
+  transition: transform 0.15s ease;
+}
+.bdlrkit-bundler-vd__option--selected .bdlrkit-bundler-vd__radio-inner {
+  transform: scale(1);
+}
+
+/* ── Label ── */
+.bdlrkit-bundler-vd__label {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--vd-text);
+}
+.bdlrkit-bundler-vd__option--selected .bdlrkit-bundler-vd__label {
+  font-weight: 600;
+}
+
+/* ── Price column ── */
+.bdlrkit-bundler-vd__prices {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  flex-shrink: 0;
+}
+
+/* Savings badge */
+.bdlrkit-bundler-vd__badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--vd-badge-bg);
+  color: var(--vd-badge-text);
+  margin-bottom: 2px;
+  white-space: nowrap;
+  width: fit-content;
+  padding: 7px 33px;
+  cursor: pointer;
+}
+
+/* Current price */
+.bdlrkit-bundler-vd__price {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--vd-text);
+  white-space: nowrap;
+}
+
+/* Original (struck through) price */
+.bdlrkit-bundler-vd__original {
+  font-size: 12px;
+  color: var(--vd-original);
+  text-decoration: line-through;
+  white-space: nowrap;
+}
+
+/* ── Hidden state (no bundles) ── */
+.bdlrkit-bundler-vd--hidden {
+  display: none;
+}
+
+/* ── Responsive ── */
+@media (max-width: 480px) {
+  .bdlrkit-bundler-vd__option {
+    padding: 12px 12px;
+    gap: 10px;
+  }
+  .bdlrkit-bundler-vd__title {
+    font-size: 11px;
+    letter-spacing: 1.2px;
+  }
+  .bdlrkit-bundler-vd__label {
+    font-size: 13px;
+  }
+  .bdlrkit-bundler-vd__price {
+    font-size: 14px;
+  }
+}
+
+.bdlrkit-bundler-vd__content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 4px;
+}
+
+.bdlrkit-bundler-vd__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.bdlrkit-bundler-vd__prices {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
