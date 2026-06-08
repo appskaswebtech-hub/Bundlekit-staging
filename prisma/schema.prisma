@@ -186,3 +186,31 @@ model ShopPlan {
 
   @@index([shop])
 }
+
+model AnalyticsSetting {
+  id               Int      @id @default(autoincrement())
+  shop             String   @unique
+  collectOrderData Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([shop])
+}
+
+model AnalyticsEvent {
+  id             String   @id @default(uuid())
+  shop           String
+
+  shopifyOrderId String
+  orderName      String?
+
+  orderTotal     Float    @default(0)
+  discountAmount Float    @default(0)
+  currency       String   @default("USD")
+
+  createdAt      DateTime @default(now())
+
+  @@unique([shop, shopifyOrderId])
+  @@index([shop])
+  @@index([shop, createdAt])
+}

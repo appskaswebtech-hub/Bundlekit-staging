@@ -30,6 +30,7 @@ export default function App() {
       <NavMenu>
         <Link to="/app" rel="home">Home</Link>
         <Link to="/app/bundles">Bundles</Link>
+        <Link to="/app/analytics">Analytics</Link>
         <Link to="/app/settings1">Settings</Link>
         <Link to="/app/billing">Upgrade to Plans</Link>
       </NavMenu>

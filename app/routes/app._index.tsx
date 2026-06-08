@@ -18,6 +18,10 @@ import {
   PackageIcon,
   ChartVerticalIcon,
   PlusIcon,
+  ClockIcon,
+  ChevronRightIcon,
+  PauseCircleIcon,
+  ListBulletedIcon,
 } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
@@ -49,8 +53,17 @@ const data = useLoaderData<typeof loader>();
 const { totalBundles, activeBundles, pausedBundles, recentBundles } = data;
   const navigate = useNavigate();
   return (
-    <Page title="Dashboard">
+    <Page>
       <BlockStack gap="600">
+        <BlockStack gap="100">
+          <Text as="h1" variant="headingLg">
+            Dashboard
+          </Text>
+          <Text as="p" tone="subdued">
+            Overview of your bundle performance and management
+          </Text>
+        </BlockStack>
+
         {/* Welcome Banner */}
         {totalBundles === 0 && (
           <Banner
@@ -68,42 +81,89 @@ const { totalBundles, activeBundles, pausedBundles, recentBundles } = data;
         {/* Stats Cards */}
         <InlineGrid columns={3} gap="400">
           <Card>
-            <BlockStack gap="200">
-              <InlineStack align="space-between" blockAlign="center">
+            <BlockStack gap="300">
+              <Box
+                background="bg-fill-magic-secondary"
+                borderRadius="200"
+                padding="200"
+                minWidth="40px"
+                maxWidth="40px"
+              >
+                <Icon source={PackageIcon} tone="magic" />
+              </Box>
+              <BlockStack gap="100">
                 <Text as="h3" variant="headingSm" tone="subdued">
                   Total Bundles
                 </Text>
-                <Icon source={PackageIcon} tone="base" />
-              </InlineStack>
-              <Text as="p" variant="headingXl">
-                {totalBundles}
-              </Text>
+                <Text as="p" variant="heading2xl">
+                  {totalBundles}
+                </Text>
+                <Text as="span" variant="bodySm" tone="subdued">
+                  All time
+                </Text>
+              </BlockStack>
             </BlockStack>
           </Card>
           <Card>
-            <BlockStack gap="200">
-              <InlineStack align="space-between" blockAlign="center">
+            <BlockStack gap="300">
+              <Box
+                background="bg-fill-success-secondary"
+                borderRadius="200"
+                padding="200"
+                minWidth="40px"
+                maxWidth="40px"
+              >
+                <Icon source={ChartVerticalIcon} tone="success" />
+              </Box>
+              <BlockStack gap="100">
                 <Text as="h3" variant="headingSm" tone="subdued">
                   Active Bundles
                 </Text>
-                <Icon source={ChartVerticalIcon} tone="success" />
-              </InlineStack>
-              <Text as="p" variant="headingXl">
-                {activeBundles}
-              </Text>
+                <Text as="p" variant="heading2xl">
+                  {activeBundles}
+                </Text>
+                <InlineStack gap="100" blockAlign="center">
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    Currently active
+                  </Text>
+                  <Badge tone="success" size="small">
+                    {totalBundles
+                      ? `↗ ${Math.round((activeBundles / totalBundles) * 100)}%`
+                      : "↗ 0%"}
+                  </Badge>
+                </InlineStack>
+              </BlockStack>
             </BlockStack>
           </Card>
           <Card>
-            <BlockStack gap="200">
-              <InlineStack align="space-between" blockAlign="center">
+            <BlockStack gap="300">
+              <Box
+                background="bg-fill-caution-secondary"
+                borderRadius="200"
+                padding="200"
+                minWidth="40px"
+                maxWidth="40px"
+              >
+                <Icon source={PauseCircleIcon} tone="caution" />
+              </Box>
+              <BlockStack gap="100">
                 <Text as="h3" variant="headingSm" tone="subdued">
                   Paused Bundles
                 </Text>
-                <Icon source={PackageIcon} tone="caution" />
-              </InlineStack>
-              <Text as="p" variant="headingXl">
-                {pausedBundles}
-              </Text>
+                <Text as="p" variant="heading2xl">
+                  {pausedBundles}
+                </Text>
+                <InlineStack gap="100" blockAlign="center">
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    Currently paused
+                  </Text>
+                  <Badge tone={pausedBundles ? "warning" : undefined} size="small">
+                    {totalBundles
+                      ? `↘ ${Math.round((pausedBundles / totalBundles) * 100)}%`
+                      : "− 0%"}
+                  </Badge>
+                </InlineStack>
+              </BlockStack>
             </BlockStack>
           </Card>
         </InlineGrid>
@@ -112,9 +172,12 @@ const { totalBundles, activeBundles, pausedBundles, recentBundles } = data;
         <Card>
           <BlockStack gap="400">
             <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingMd">
-                Recent Bundles
-              </Text>
+              <InlineStack gap="200" blockAlign="center">
+                <Icon source={ClockIcon} tone="subdued" />
+                <Text as="h2" variant="headingMd">
+                  Recent Bundles
+                </Text>
+              </InlineStack>
               <Button
                 icon={PlusIcon}
                 variant="primary"
@@ -144,6 +207,13 @@ const { totalBundles, activeBundles, pausedBundles, recentBundles } = data;
                   >
                     <InlineStack align="space-between" blockAlign="center">
                       <InlineStack gap="300" blockAlign="center">
+                        <Box
+                          background="bg-fill-secondary"
+                          borderRadius="200"
+                          padding="200"
+                        >
+                          <Icon source={ListBulletedIcon} tone="subdued" />
+                        </Box>
                         <BlockStack gap="100">
                           <Text as="span" variant="bodyMd" fontWeight="semibold">
                             {bundle.name}
@@ -166,12 +236,15 @@ const { totalBundles, activeBundles, pausedBundles, recentBundles } = data;
                         >
                           {bundle.status}
                         </Badge>
-                        <Button
-                          variant="plain"
-                          onClick={() => navigate(`/app/bundles/${bundle.id}`)}
-                        >
-                          Edit
-                        </Button>
+                        <InlineStack gap="0" blockAlign="center" wrap={false}>
+                          <Button
+                            variant="plain"
+                            onClick={() => navigate(`/app/bundles/${bundle.id}`)}
+                          >
+                            Edit
+                          </Button>
+                          <Icon source={ChevronRightIcon} tone="subdued" />
+                        </InlineStack>
                       </InlineStack>
                     </InlineStack>
                   </Box>
